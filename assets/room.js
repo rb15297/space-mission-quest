@@ -1,0 +1,234 @@
+
+(function () {
+  const FAIL_MSG = "Not yet \u2014 check your answers and try again.";
+  const OK_MSG = "Room unlocked!";
+
+  function storageKey(room, challengeId) {
+    return `room${room}.ch${challengeId}`;
+  }
+  function unlockedKey(room) {
+    return `room${room}.unlocked`;
+  }
+
+  async function sha256Hex(text) {
+    const data = new TextEncoder().encode(text);
+    const buf = await crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(buf))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  function burstConfetti() {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const layer = document.createElement("div");
+    layer.className = "confetti";
+    document.body.appendChild(layer);
+    const colors = ["#F18F01", "#3BB273", "#6C63FF", "#E67E22", "#2980B9"];
+    for (let i = 0; i < 28; i++) {
+      const bit = document.createElement("i");
+      bit.style.left = Math.random() * 100 + "%";
+      bit.style.background = colors[i % colors.length];
+      bit.style.animationDelay = (Math.random() * 0.25) + "s";
+      layer.appendChild(bit);
+    }
+    setTimeout(() => layer.remove(), 1200);
+  }
+
+  function paintProgress(root) {
+    if (!root) return;
+    const room = root.dataset.room;
+    const ids = JSON.parse(root.dataset.challengeIds || "[]");
+    const current = root.dataset.current || "";
+    root.querySelectorAll(".dot").forEach((dot, i) => {
+      const id = ids[i];
+      const saved = sessionStorage.getItem(storageKey(room, id));
+      dot.classList.toggle("filled", !!saved);
+      dot.classList.toggle("current", id === current);
+    });
+  }
+
+  function applyTry(letter) {
+    const layer = document.querySelector("[data-tries]");
+    const lineEl = document.querySelector("[data-try-line]");
+    if (!layer || !lineEl) return;
+    let tries = [];
+    try { tries = JSON.parse(layer.getAttribute("data-tries") || "[]"); } catch (e) { return; }
+    const idx = "ABCD".indexOf(letter);
+    if (idx >= 0 && tries[idx] && tries[idx].line) {
+      lineEl.textContent = tries[idx].line;
+      lineEl.removeAttribute("hidden");
+    } else {
+      lineEl.textContent = "";
+      lineEl.setAttribute("hidden", "");
+    }
+  }
+
+  function initChoices() {
+    const box = document.querySelector("[data-choices]");
+    if (!box) return;
+    const room = box.dataset.room;
+    const challengeId = box.dataset.challengeId;
+    const key = storageKey(room, challengeId);
+    const buttons = [...box.querySelectorAll(".choice")];
+    const saved = sessionStorage.getItem(key);
+    if (saved) {
+      buttons.forEach((b) => b.classList.toggle("selected", b.dataset.letter === saved));
+      applyTry(saved);
+    }
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        buttons.forEach((b) => b.classList.remove("selected"));
+        btn.classList.add("selected");
+        sessionStorage.setItem(key, btn.dataset.letter);
+        applyTry(btn.dataset.letter);
+        paintProgress(document.querySelector("[data-progress]"));
+      });
+    });
+  }
+
+  function initUnlock() {
+    const panel = document.querySelector("[data-unlock]");
+    if (!panel) return;
+    const room = panel.dataset.room;
+    const expected = panel.dataset.unlockHash;
+    const ids = JSON.parse(panel.dataset.challengeIds || "[]");
+    const roomCode = panel.dataset.roomCode || "";
+    const nextHref = panel.dataset.nextHref || "";
+    const msg = panel.querySelector(".msg");
+    const codeEl = panel.querySelector(".room-code");
+    const btn = panel.querySelector("[data-unlock-btn]");
+    const continueWrap = panel.querySelector(".continue-wrap");
+    const celebrate = document.querySelector("[data-celebrate]");
+    const sceneBg = document.querySelector(".scene-bg");
+
+    function showCelebrate(on) {
+      const vid = celebrate && celebrate.querySelector("video");
+      const img = celebrate && celebrate.querySelector("img");
+      if (on) {
+        if (vid && celebrate) {
+          const poster = vid.getAttribute("poster");
+          if (sceneBg && poster) {
+            sceneBg.style.backgroundImage = `url("${poster}")`;
+          }
+          const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          if (reduce) {
+            celebrate.setAttribute("hidden", "");
+            vid.pause();
+            vid.currentTime = 0;
+          } else {
+            celebrate.removeAttribute("hidden");
+            vid.currentTime = 0;
+            vid.play().catch(() => {
+              celebrate.setAttribute("hidden", "");
+            });
+          }
+        } else if (sceneBg && img) {
+          sceneBg.style.backgroundImage = `url("${img.getAttribute("src")}")`;
+          if (celebrate) celebrate.setAttribute("hidden", "");
+        } else if (celebrate) {
+          celebrate.removeAttribute("hidden");
+        }
+      } else {
+        if (sceneBg && sceneBg.dataset.lockedSrc) {
+          sceneBg.style.backgroundImage = `url("${sceneBg.dataset.lockedSrc}")`;
+        }
+        if (celebrate) {
+          celebrate.setAttribute("hidden", "");
+          if (vid) {
+            vid.pause();
+            vid.currentTime = 0;
+          }
+        }
+      }
+    }
+
+    function applySuccess() {
+      panel.classList.remove("fail");
+      panel.classList.add("success");
+      if (msg) { msg.textContent = OK_MSG; msg.className = "msg ok"; }
+      if (codeEl) codeEl.textContent = roomCode;
+      if (continueWrap && nextHref) {
+        continueWrap.innerHTML = `<a class="btn success" href="${nextHref}">Continue</a>`;
+      }
+      showCelebrate(true);
+    }
+
+    if (sessionStorage.getItem(unlockedKey(room)) === "1") {
+      applySuccess();
+    }
+
+    btn?.addEventListener("click", async () => {
+      const trail = ids.map((id) => sessionStorage.getItem(storageKey(room, id)) || "").join("");
+      if (ids.some((id) => !sessionStorage.getItem(storageKey(room, id)))) {
+        panel.classList.remove("success");
+        panel.classList.add("fail");
+        showCelebrate(false);
+        if (msg) { msg.textContent = "Answer every challenge first."; msg.className = "msg bad"; }
+        setTimeout(() => panel.classList.remove("fail"), 450);
+        return;
+      }
+      const digest = await sha256Hex(trail);
+      if (digest === expected) {
+        sessionStorage.setItem(unlockedKey(room), "1");
+        applySuccess();
+        burstConfetti();
+      } else {
+        panel.classList.remove("success");
+        panel.classList.add("fail");
+        showCelebrate(false);
+        if (msg) { msg.textContent = FAIL_MSG; msg.className = "msg bad"; }
+        setTimeout(() => panel.classList.remove("fail"), 450);
+      }
+    });
+  }
+
+  function initFinal() {
+    const root = document.querySelector("[data-final]");
+    if (!root) return;
+    const rooms = JSON.parse(root.dataset.rooms || "[]");
+    const allOk = rooms.every((n) => sessionStorage.getItem(unlockedKey(n)) === "1");
+    const gate = root.querySelector("[data-final-gate]");
+    const win = root.querySelector("[data-final-win]");
+    if (allOk) {
+      root.classList.add("success");
+      if (gate) gate.hidden = true;
+      if (win) win.hidden = false;
+      burstConfetti();
+      const media = root.querySelector("[data-final-media]");
+      const sceneBg = root.querySelector(".scene-bg");
+      const vid = media && media.querySelector("video");
+      const img = media && media.querySelector("img");
+      if (vid && media) {
+        const poster = vid.getAttribute("poster");
+        if (sceneBg && poster) {
+          sceneBg.style.backgroundImage = `url("${poster}")`;
+        }
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduce) {
+          media.setAttribute("hidden", "");
+          vid.pause();
+          vid.currentTime = 0;
+        } else {
+          media.removeAttribute("hidden");
+          vid.currentTime = 0;
+          vid.play().catch(() => {
+            media.setAttribute("hidden", "");
+          });
+        }
+      } else if (sceneBg && img) {
+        sceneBg.style.backgroundImage = `url("${img.getAttribute("src")}")`;
+      } else if (media) {
+        media.removeAttribute("hidden");
+      }
+    } else if (gate) {
+      gate.hidden = false;
+      if (win) win.hidden = true;
+    }
+  }
+
+  document.querySelectorAll(".card").forEach((c) => c.classList.add("enter"));
+  paintProgress(document.querySelector("[data-progress]"));
+  initChoices();
+  initUnlock();
+  initFinal();
+})();
