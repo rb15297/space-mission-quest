@@ -343,3 +343,24 @@ body.scene-overlay .scene-bg .final-scene video {
   border-radius: 0;
   background: transparent;
 }
+/* Square final clip: show the whole frame instead of cover-cropping it. */
+body.scene-overlay .scene-bg:has(.final-scene:not([hidden])) {
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-color: #1E3A5F;
+}
+body.scene-overlay .scene-bg .final-scene img,
+body.scene-overlay .scene-bg .final-scene video {
+  object-fit: contain;
+  object-position: left center;
+}
+@media (max-width: 899px) {
+  body.scene-overlay .scene-bg:has(.final-scene:not([hidden])) {
+    background-position: center top;
+  }
+  body.scene-overlay .scene-bg .final-scene img,
+  body.scene-overlay .scene-bg .final-scene video {
+    object-position: center top;
+  }
+}
